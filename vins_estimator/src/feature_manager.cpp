@@ -168,51 +168,61 @@ void FeatureManager::debugShow()
 }
 
 /**
- * @brief   计算frame_count_l和frame_count_r两帧匹配的特征点对，获取特征点的3D坐标
- * @Description    如果某个特征点能被观测到的第一帧和最后一帧范围大，[start_frame,endFrame()]是个大范围，
- *                 而窗口[frame_count_l, frame_count_r]被包含进去了，那么可以直接获取特征点的3D坐标
- * @param[in]   frame_count_l 需要匹配的第一帧图像
- * @param[in]   frame_count_r 需要匹配的第二帧图像
- * @return  frame_count_l和frame_count_r两帧匹配的特征点3D坐标对
+ * @brief           计算frame_count_l和frame_count_r两帧匹配(共视)的特征点对，获取特征点的3D坐标
+ * @Description     如果某个特征点能被观测到的第一帧和最后一帧之间的范围大，也就是[start_frame,endFrame()]是个大范围，
+ *                  而窗口[frame_count_l, frame_count_r]被包含进去了，那么可以直接获取特征点的3D坐标
+ * @param[in]       frame_count_l 需要匹配的第一帧图像
+ * @param[in]       frame_count_r 需要匹配的第二帧图像
+ * @return          frame_count_l和frame_count_r两帧匹配的特征点3D坐标对
 */
 vector<pair<Vector3d, Vector3d>> FeatureManager::getCorresponding(int frame_count_l, int frame_count_r)
 {
-    vector<pair<Vector3d, Vector3d>> corres;
+    vector<pair<Vector3d, Vector3d>> corres; // 存储3D点对的容器列表
     for (auto &it : feature) // 通过feature的list容器
     {
+        // 要找的特征点的两帧在窗口范围内，可以直接取。窗口为：观测到当前特征点的所有图像帧，也就是[start_frame,endFrame()]
         if (it.start_frame <= frame_count_l && it.endFrame() >= frame_count_r)
         {
             Vector3d a = Vector3d::Zero(), b = Vector3d::Zero();
-            int idx_l = frame_count_l - it.start_frame;
+            // 计算传入的frame_count_l和frame_count_r距离最开始一帧的距离，也就是最新两帧的index
+            int idx_l = frame_count_l - it.start_frame; // 当前帧-第一次观测到特征点的帧数，也就是当前帧的索引
             int idx_r = frame_count_r - it.start_frame;
 
-            a = it.feature_per_frame[idx_l].point;
+            a = it.feature_per_frame[idx_l].point; // 获取该帧上该特征点的3D坐标
 
             b = it.feature_per_frame[idx_r].point;
             
-            corres.push_back(make_pair(a, b));
+            corres.push_back(make_pair(a, b)); // 存放每一个特征点it在两个帧中对应的3D点对
         }
     }
     return corres;
 }
 
+/**
+ * @brief           设置特征点的逆深度估计值
+ * @Description     取有效特征点，也就是该特征点被至少两帧观测到了并且第一次观测到的帧索引不是在最后，设置有效特征点的逆深度值
+ * @param[in]       x 所有特征点的深度值向量
+ * @return          void
+*/
 void FeatureManager::setDepth(const VectorXd &x)
 {
     int feature_index = -1;
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : feature) // 遍历所有特征点
     {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
+        it_per_id.used_num = it_per_id.feature_per_frame.size(); // 该特征点被观测到的所有帧的数量
+
+        // 该特征点被至少两帧观测到了并且第一次观测到的帧索引start_frame不是在最后，也就是第一次观测到的帧在滑动窗口内
+        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2)) 
             continue;
 
-        it_per_id.estimated_depth = 1.0 / x(++feature_index);
+        it_per_id.estimated_depth = 1.0 / x(++feature_index); // 求解逆深度
         //ROS_INFO("feature id %d , start_frame %d, depth %f ", it_per_id->feature_id, it_per_id-> start_frame, it_per_id->estimated_depth);
         if (it_per_id.estimated_depth < 0)
         {
-            it_per_id.solve_flag = 2;
+            it_per_id.solve_flag = 2; // 深度小于0则估计失败
         }
         else
-            it_per_id.solve_flag = 1;
+            it_per_id.solve_flag = 1; // 深度大于等于0则估计成功
     }
 }
 
@@ -257,25 +267,43 @@ VectorXd FeatureManager::getDepthVector()
     return dep_vec;
 }
 
+/**
+ * @brief           对滑动窗口中所有帧中depth未知的特征点进行三角化     
+ * @Description     
+ * @param[in]   
+ * @param[in]       tic[] 相机和IMU外参的平移分量t^b_c
+ * @param[in]       ric[] 相机和IMU外参的旋转分量R^b_c  
+ * @return          void
+*/
 void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
 {
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : feature) // 遍历所有特征点
     {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        it_per_id.used_num = it_per_id.feature_per_frame.size(); // 该特征点被观测到的所有帧的数量
+
+        // 该特征点被至少两帧观测到了并且第一次观测到的帧索引start_frame不是在最后，也就是第一次观测到的帧在滑动窗口内，此为有效特征点
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 
+        // 该特征点估计的逆深度需要小于0，测试结果为-1
         if (it_per_id.estimated_depth > 0)
             continue;
-        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
 
-        ROS_ASSERT(NUM_OF_CAM == 1);
-        Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1; // 第一次观测到该特征点的帧以及它的前一帧
+
+        ROS_ASSERT(NUM_OF_CAM == 1); // 相机个数需要为1，也就是单目，否则断言判断为假，终止程序执行
+        Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4); // 定义三角化最小二乘问题中的系统矩阵A，维度为(2×帧数)*4
         int svd_idx = 0;
 
-        Eigen::Matrix<double, 3, 4> P0;
-        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
-        Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+        //R0 t0为第i帧相机坐标系到世界坐标系的变换矩阵Rwc
+        Eigen::Matrix<double, 3, 4> P0; // 定义第i帧的投影矩阵P0，维度为3*4
+        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0]; // t0为第i帧相机坐标系到世界坐标系的平移分量，t^w_ci = t^w_bi + R^w_bi * t^b_c
+        Eigen::Matrix3d R0 = Rs[imu_i] * ric[0]; // R0为第i帧相机坐标系到世界坐标系的旋转分量，也就是旋转矩阵 R^w_ci = R^w_bi * R^b_c
+        
+        // 将第i帧的投影矩阵P0设为  
+        // [1 0 0 0]
+        // [0 1 0 0]
+        // [0 0 1 0]
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
 
@@ -283,15 +311,17 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         {
             imu_j++;
 
-            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
-            Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
-            Eigen::Vector3d t = R0.transpose() * (t1 - t0);
-            Eigen::Matrix3d R = R0.transpose() * R1;
-            Eigen::Matrix<double, 3, 4> P;
-            P.leftCols<3>() = R.transpose();
-            P.rightCols<1>() = -R.transpose() * t;
-            Eigen::Vector3d f = it_per_frame.point.normalized();
-            svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
+            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0]; // t0为第j帧相机坐标系到世界坐标系的平移分量，t^w_cj = t^w_bj + R^w_bj * t^b_c
+            Eigen::Matrix3d R1 = Rs[imu_j] * ric[0]; // R0为第j帧相机坐标系到世界坐标系的旋转分量，也就是旋转矩阵 R^w_cj = R^w_bj * R^b_c
+            Eigen::Vector3d t = R0.transpose() * (t1 - t0); // t为第j帧相机坐标系到第i帧相机坐标系变换的平移分量，也就是两帧之间的平移 t^ci_cj = R^ci_w * (t^w_cj - t^w_ci) = (R^w_ci)^T * (t^w_cj - t^w_ci)
+            Eigen::Matrix3d R = R0.transpose() * R1; // R为第j帧相机坐标系到第i帧相机坐标系变换的旋转分量，也就是两帧之间的旋转矩阵 R^ci_cj = R^ci_w * R^w_cj = (R^w_ci)^T * R^w_cj
+            Eigen::Matrix<double, 3, 4> P; // 定义第j帧的投影矩阵P，维度为3*4
+
+            // 将第j帧的投影矩阵P设为[R^cj_ci | t^cj_ci]
+            P.leftCols<3>() = R.transpose(); // 第i帧相机坐标系到第j帧相机坐标系的旋转矩阵 R^cj_ci = (R^ci_cj)^T
+            P.rightCols<1>() = -R.transpose() * t; // 第i帧相机坐标系到第j帧相机坐标系的平移 t^cj_ci = -(R^ci_cj)^T * t^ci_cj
+            Eigen::Vector3d f = it_per_frame.point.normalized(); // 特征点在归一化相机坐标系上的坐标
+            svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0); 
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
 
             if (imu_i == imu_j)

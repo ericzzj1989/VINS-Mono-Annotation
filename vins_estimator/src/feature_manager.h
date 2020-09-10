@@ -53,7 +53,7 @@ class FeaturePerFrame
         cur_td = td;
     }
     double cur_td;
-    Vector3d point;
+    Vector3d point; // 特征点在相机坐标系的3D坐标
     Vector2d uv;
     Vector2d velocity;
     double z; // 特征点的深度

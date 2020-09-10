@@ -1,6 +1,6 @@
 #include "utility.h"
 
-Eigen::Matrix3d Utility::g2R(const Eigen::Vector3d &g)
+Eigen::Matrix3d Utility::g2R(const Eigen::Vector3d &g) // 参考https://www.cnblogs.com/glxin/p/12869019.html
 {
     Eigen::Matrix3d R0;
     Eigen::Vector3d ng1 = g.normalized();

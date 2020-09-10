@@ -159,8 +159,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             {
                 ROS_WARN("initial extrinsic rotation calib success");
                 ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
-                ric[0] = calib_ric; // R_b_c
-                RIC[0] = calib_ric; // R_b_c
+                ric[0] = calib_ric; // R^b_c
+                RIC[0] = calib_ric; // R^b_c
                 ESTIMATE_EXTRINSIC = 1;
             }
         }
@@ -438,6 +438,7 @@ bool Estimator::visualInitialAlign()
         it_per_id.estimated_depth *= s;
     }
 
+    // 参考https://www.cnblogs.com/glxin/p/12869019.html
     Matrix3d R0 = Utility::g2R(g);
     double yaw = Utility::R2ypr(R0 * Rs[0]).x();
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
