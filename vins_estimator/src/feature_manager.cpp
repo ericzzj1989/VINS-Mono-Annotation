@@ -269,8 +269,8 @@ VectorXd FeatureManager::getDepthVector()
 
 /**
  * @brief           对滑动窗口中所有帧中depth未知的特征点进行三角化     
- * @Description     
- * @param[in]   
+ * @Description     https://blog.csdn.net/u012101603/article/details/79714332
+ * @param[in]       Ps[] IMU到世界坐标系的平移量
  * @param[in]       tic[] 相机和IMU外参的平移分量t^b_c
  * @param[in]       ric[] 相机和IMU外参的旋转分量R^b_c  
  * @return          void
@@ -295,7 +295,15 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4); // 定义三角化最小二乘问题中的系统矩阵A，维度为(2×帧数)*4
         int svd_idx = 0;
 
-        //R0 t0为第i帧相机坐标系到世界坐标系的变换矩阵Rwc
+        //R0 t0为第i帧相机坐标系到世界坐标系的变换矩阵Rwc，T^w_ci = (T^w_bi) * (T^bi_ci)
+        // T^w_ci = [R^w_ci  t^w_ci]
+        //          [  0        1  ]
+        // T^w_bi = [R^w_bi  t^w_bi]
+        //          [  0        1  ]
+        // T^bi_ci = [R^bi_ci  t^bi_ci] = [R^b_c  t^b_c] 外参
+        //           [   0        1   ]   [  0     1   ]
+        // T^w_ci = (T^w_bi) * (T^bi_ci) = [(R^w_bi)*(R^b_c)  (t^w_bi)+(R^w_bi)*t^b_c] = [R^w_ci  t^w_ci]
+        //                                 [        0                       1        ]   [  0        1  ]
         Eigen::Matrix<double, 3, 4> P0; // 定义第i帧的投影矩阵P0，维度为3*4
         Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0]; // t0为第i帧相机坐标系到世界坐标系的平移分量，t^w_ci = t^w_bi + R^w_bi * t^b_c
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0]; // R0为第i帧相机坐标系到世界坐标系的旋转分量，也就是旋转矩阵 R^w_ci = R^w_bi * R^b_c
@@ -307,7 +315,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
 
-        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        for (auto &it_per_frame : it_per_id.feature_per_frame) // 遍历某特征点共视的帧
         {
             imu_j++;
 
@@ -321,24 +329,28 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             P.leftCols<3>() = R.transpose(); // 第i帧相机坐标系到第j帧相机坐标系的旋转矩阵 R^cj_ci = (R^ci_cj)^T
             P.rightCols<1>() = -R.transpose() * t; // 第i帧相机坐标系到第j帧相机坐标系的平移 t^cj_ci = -(R^ci_cj)^T * t^ci_cj
             Eigen::Vector3d f = it_per_frame.point.normalized(); // 特征点在归一化相机坐标系上的坐标
-            svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0); 
+
+            // 每个特征点对A矩阵贡献两个方程
+            // P = [P1 P2 P3]^T 行向量形式
+            // AX = 0  A = [A(2*i) A(2*i+1) A(2*i+2) A(2*i+3) ...]^T
+            // A(2*i) = x(i) * P3 - z(i) * P1
+            svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
+            // A(2*i+1) = y(i) * P3 - z(i) * P2
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
 
             if (imu_i == imu_j)
                 continue;
         }
         ROS_ASSERT(svd_idx == svd_A.rows());
+        // 对A进行SVD分解得到其最小奇异值对应的单位奇异向量(x,y,z,w)
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
-        double svd_method = svd_V[2] / svd_V[3];
-        //it_per_id->estimated_depth = -b / A;
-        //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
+        double svd_method = svd_V[2] / svd_V[3]; // 深度为z/w
 
-        it_per_id.estimated_depth = svd_method;
-        //it_per_id->estimated_depth = INIT_DEPTH;
+        it_per_id.estimated_depth = svd_method; // 深度值赋值
 
         if (it_per_id.estimated_depth < 0.1)
         {
-            it_per_id.estimated_depth = INIT_DEPTH;
+            it_per_id.estimated_depth = INIT_DEPTH; // INIT_DEPTH = 5.0
         }
 
     }
@@ -360,70 +372,94 @@ void FeatureManager::removeOutlier()
     }
 }
 
+/**
+ * @brief           对应论文VI-D，边缘化最老帧时处理深度值  
+ * @Description     边缘化最老帧时，处理特征点保存的帧号，将帧号向前滑动，同时将起始帧是最老帧的特征点的深度值进行转移，转移到下一帧中
+ * @param[in]       marg_R 需要被边缘化帧的旋转矩阵，即 R^w_ci
+ * @param[in]       marg_P 需要被边缘化帧的平移量，即 t^w_ci
+ * @param[in]       new_R 需要被边缘化帧的下一帧的旋转矩阵，即 R^w_cj
+ * @param[in]       new_P 需要被边缘化帧的下一帧的平移量，t^w_cj
+ * @return          void
+*/
 void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3d marg_P, Eigen::Matrix3d new_R, Eigen::Vector3d new_P)
 {
     for (auto it = feature.begin(), it_next = feature.begin();
-         it != feature.end(); it = it_next)
+         it != feature.end(); it = it_next) // 遍历滑动窗口内所有的特征点
     {
         it_next++;
 
+        // 特征点起始帧如果不是最老的帧，也就是不为零，则将起始帧帧号减一
         if (it->start_frame != 0)
             it->start_frame--;
         else
         {
-            Eigen::Vector3d uv_i = it->feature_per_frame[0].point;  
-            it->feature_per_frame.erase(it->feature_per_frame.begin());
+            // 特征点起始帧是最老的帧
+            Eigen::Vector3d uv_i = it->feature_per_frame[0].point; // 该特征点在最老帧归一化相机坐标系下的3D坐标
+            it->feature_per_frame.erase(it->feature_per_frame.begin()); // 移除掉该特征点的最老帧
+            // 该特征点只在最老帧被观测，也就是该特征点被观测到的帧数量为1或者0，则直接移除该特征点
             if (it->feature_per_frame.size() < 2)
             {
-                feature.erase(it);
+                feature.erase(it); // 删除特征点
                 continue;
             }
+            // 除了最老帧可以观测到该特征点，还有其他帧也观测到了该特征点
             else
             {
-                Eigen::Vector3d pts_i = uv_i * it->estimated_depth;
-                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
-                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);
-                double dep_j = pts_j(2);
+                Eigen::Vector3d pts_i = uv_i * it->estimated_depth; // pts_i 为该特征点在最老帧相机坐标系下的3D坐标 p_ci，也就是归一化坐标乘以深度
+                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P; // w_pts_i 为该特征点在世界坐标系下的3D坐标 p_w，即 p_w = (R^w_ci) * p_ci + t^w_ci
+                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P); // pts_j 为该特征点在最老帧的下一帧相机坐标系下的3D坐标，p_w = (R^w_cj) * p_cj + t^w_cj -> p_cj = (R^w_cj)^T * (p_w - (t^w_cj))
+                double dep_j = pts_j(2); // 该特征点在最老帧的下一帧相机坐标系下的深度
                 if (dep_j > 0)
-                    it->estimated_depth = dep_j;
+                    it->estimated_depth = dep_j; // 该特征点的深度
                 else
                     it->estimated_depth = INIT_DEPTH;
             }
         }
-        // remove tracking-lost feature after marginalize
-        /*
-        if (it->endFrame() < WINDOW_SIZE - 1)
-        {
-            feature.erase(it);
-        }
-        */
     }
 }
 
+/**
+ * @brief           对应论文VI-D，边缘化最老帧时处理特征点所保存的帧号
+ * @Description     边缘化最老帧时，直接将特征点所保存的帧号向前滑动，也就是对特征点在最老帧的信息进行移除处理
+ * @return          void
+*/
 void FeatureManager::removeBack()
 {
     for (auto it = feature.begin(), it_next = feature.begin();
-         it != feature.end(); it = it_next)
+         it != feature.end(); it = it_next) // 遍历滑动窗口内所有的特征点
     {
         it_next++;
 
+        // 特征点起始帧如果不是最老的帧，也就是不为零，则将起始帧帧号减一
         if (it->start_frame != 0)
             it->start_frame--;
+
+        // 如果start_frame为0则直接移除feature_per_frame中第0帧对应的FeaturePerFrame
         else
         {
-            it->feature_per_frame.erase(it->feature_per_frame.begin());
+            it->feature_per_frame.erase(it->feature_per_frame.begin()); // 移除feature_per_frame的第0帧FeaturePerFrame
+
+            // 如果feature_per_frame为空，也就是该特征点只在最老帧被观测，则直接删除特征点
             if (it->feature_per_frame.size() == 0)
-                feature.erase(it);
+                feature.erase(it); // 删除特征点
         }
     }
 }
 
+/**
+ * @brief           对应论文VI-D，边缘化次新帧处理特征点所保存的帧号  
+ * @Description     边缘化次新帧时，对特征点在次新帧的信息进行移除处理
+ * @param[in]       frame_count 当前滑动窗口中的frame个数
+ * @return          void
+*/
 void FeatureManager::removeFront(int frame_count)
 {
-    for (auto it = feature.begin(), it_next = feature.begin(); it != feature.end(); it = it_next)
+    for (auto it = feature.begin(), it_next = feature.begin(); 
+         it != feature.end(); it = it_next) // 遍历滑动窗口内所有的特征点
     {
         it_next++;
 
+        // 特征点起始帧如果是最新帧，则将起始帧帧号减一
         if (it->start_frame == frame_count)
         {
             it->start_frame--;
@@ -431,9 +467,15 @@ void FeatureManager::removeFront(int frame_count)
         else
         {
             int j = WINDOW_SIZE - 1 - it->start_frame;
+
+            // 如果次新帧之前已经跟踪结束则什么都不做
             if (it->endFrame() < frame_count - 1)
                 continue;
+
+            //如果次新帧仍被跟踪，则删除feature_per_frame中次新帧对应的FeaturePerFrame
             it->feature_per_frame.erase(it->feature_per_frame.begin() + j);
+
+            // 如果feature_per_frame为空，也就是该特征点只在次新帧被观测，则直接删除特征点
             if (it->feature_per_frame.size() == 0)
                 feature.erase(it);
         }

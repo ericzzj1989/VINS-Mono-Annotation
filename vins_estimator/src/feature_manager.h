@@ -10,7 +10,7 @@
 *   ......
 *   for (auto &it_per_frame : it_per_id.feature_per_frame)
 *   {
-*     Vector3d pts_j = it_per_frame.point;// 3D路标点坐标
+*     Vector3d pts_j = it_per_frame.point;// 归一化相机坐标系下3D路标点坐标
 *   }
 * }
 */
@@ -53,7 +53,7 @@ class FeaturePerFrame
         cur_td = td;
     }
     double cur_td;
-    Vector3d point; // 特征点在相机坐标系的3D坐标
+    Vector3d point; // 特征点在归一化相机坐标系的3D坐标
     Vector2d uv;
     Vector2d velocity;
     double z; // 特征点的深度
