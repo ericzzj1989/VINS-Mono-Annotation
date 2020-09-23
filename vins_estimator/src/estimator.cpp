@@ -458,13 +458,13 @@ bool Estimator::visualInitialAlign()
 }
 
 /**
- * @brief   返回滑动窗口中第一个满足共视特征以及视差的帧，为l帧，以及RT,可以三角化
- * @Description    判断每帧到窗口最后一帧对应特征点的平均视差是否大于30
- *               solveRelativeRT()通过基础矩阵计算当前帧与第l帧之间的R和T,并判断内点数目是否足够
- * @param[out]   relative_R 当前帧到第l帧之间的旋转矩阵R
- * @param[out]   relative_T 当前帧到第l帧之间的平移向量T
- * @param[out]   l 从第一帧开始到滑动窗口中第一个满足视差足够的帧，这里的l帧之后作为参考帧做全局SFM用
- * @return  bool 1:可以进行初始化;0:不满足初始化条件
+ * @brief           返回滑动窗口中第一个满足共视特征以及视差的帧，为l帧，以及RT,可以三角化
+ * @Description     判断每帧到窗口最后一帧对应特征点的平均视差是否大于30
+ *                  solveRelativeRT()通过基础矩阵计算当前帧与第l帧之间的R和T,并判断内点数目是否足够
+ * @param[out]      relative_R 当前帧到第l帧之间的旋转矩阵R
+ * @param[out]      relative_T 当前帧到第l帧之间的平移向量T
+ * @param[out]      l 从第一帧开始到滑动窗口中第一个满足视差足够的帧，这里的l帧之后作为参考帧做全局SFM用
+ * @return          bool 1:可以进行初始化；0:不满足初始化条件
 */
 bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
 {

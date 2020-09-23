@@ -1,25 +1,49 @@
 #include "feature_manager.h"
 
+/**
+ * @brief           获取最后一次观测到这个特征点的帧索引ID
+ * @Description     通过某个特征点首次被观测到的帧索引start_frame和该特征点共视帧的数量feature_per_frame.size()，得到最后一次观测到这个特征点的帧索引ID
+ * @param[in]       void
+ * @return          int 观测到该特征点的最后一帧ID
+*/
 int FeaturePerId::endFrame()
 {
     return start_frame + feature_per_frame.size() - 1;
 }
 
+/**
+ * @brief           类FeatureManager的构造函数
+ * @Description     通过参数_Rs[]设置IMU到世界坐标系的旋转矩阵Rs，同时将外参旋转矩阵ric[0]初始化为单位矩阵
+ * @param[in]       _ric[] 外参旋转矩阵
+ * @return          void
+*/
 FeatureManager::FeatureManager(Matrix3d _Rs[])
     : Rs(_Rs)
 {
-    for (int i = 0; i < NUM_OF_CAM; i++)
-        ric[i].setIdentity();
+    for (int i = 0; i < NUM_OF_CAM; i++) // NUM_OF_CAM = 1
+        ric[i].setIdentity(); // 通过EIGEN的setIdentity()将外参旋转矩阵ric[0]设置为单位矩阵
 }
 
+/**
+ * @brief           设置外参的旋转矩阵
+ * @Description     通过参数_ric[0]设置外参旋转矩阵ric[0]
+ * @param[in]       _ric[] 外参旋转矩阵
+ * @return          void
+*/
 void FeatureManager::setRic(Matrix3d _ric[])
 {
-    for (int i = 0; i < NUM_OF_CAM; i++)
+    for (int i = 0; i < NUM_OF_CAM; i++) // NUM_OF_CAM = 1
     {
         ric[i] = _ric[i];
     }
 }
 
+/**
+ * @brief           清除滑动窗口内所有特征点信息
+ * @Description     使用clear()清除list容器feature存储的所有特征点信息，使得feature.size() = 0
+ * @param[in]       void
+ * @return          void
+*/
 void FeatureManager::clearState()
 {
     feature.clear();
@@ -47,7 +71,6 @@ int FeatureManager::getFeatureCount()
     }
     return cnt;
 }
-
 
 /**
  * 对应论文解读：
@@ -146,6 +169,8 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     }
 }
 
+#if 0 
+调试代码
 void FeatureManager::debugShow()
 {
     ROS_DEBUG("debug show");
@@ -166,6 +191,7 @@ void FeatureManager::debugShow()
         ROS_ASSERT(it.used_num == sum);
     }
 }
+#endif
 
 /**
  * @brief           计算frame_count_l和frame_count_r两帧匹配(共视)的特征点对，获取特征点的3D坐标
@@ -199,7 +225,7 @@ vector<pair<Vector3d, Vector3d>> FeatureManager::getCorresponding(int frame_coun
 }
 
 /**
- * @brief           设置特征点的逆深度估计值
+ * @brief           设置所有有效特征点的逆深度估计值
  * @Description     取有效特征点，也就是该特征点被至少两帧观测到了并且第一次观测到的帧索引不是在最后，设置有效特征点的逆深度值
  * @param[in]       x 所有特征点的深度值向量
  * @return          void
@@ -209,14 +235,14 @@ void FeatureManager::setDepth(const VectorXd &x)
     int feature_index = -1;
     for (auto &it_per_id : feature) // 遍历所有特征点
     {
-        it_per_id.used_num = it_per_id.feature_per_frame.size(); // 该特征点被观测到的所有帧的数量
+        it_per_id.used_num = it_per_id.feature_per_frame.size(); // 该特征点it_per_id被观测到的所有帧的数量
 
         // 该特征点被至少两帧观测到了并且第一次观测到的帧索引start_frame不是在最后，也就是第一次观测到的帧在滑动窗口内
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2)) 
             continue;
 
         it_per_id.estimated_depth = 1.0 / x(++feature_index); // 求解逆深度
-        //ROS_INFO("feature id %d , start_frame %d, depth %f ", it_per_id->feature_id, it_per_id-> start_frame, it_per_id->estimated_depth);
+
         if (it_per_id.estimated_depth < 0)
         {
             it_per_id.solve_flag = 2; // 深度小于0则估计失败
@@ -226,40 +252,63 @@ void FeatureManager::setDepth(const VectorXd &x)
     }
 }
 
+/**
+ * @brief           删除深度估计失败的特征点信息       
+ * @Description     通过判断某特征点估计求解器solve_flag的值，若深度估计失败则删除该特征点的信息
+ * @param[in]       void
+ * @return          void
+*/
 void FeatureManager::removeFailures()
 {
     for (auto it = feature.begin(), it_next = feature.begin();
-         it != feature.end(); it = it_next)
+         it != feature.end(); it = it_next) // 遍历滑动窗口内所有的特征点
     {
         it_next++;
-        if (it->solve_flag == 2)
-            feature.erase(it);
+        if (it->solve_flag == 2) // 某特征点的深度估计失败（setDepth函数中有失败的处理），即深度值小于0，则删除该特征点
+            feature.erase(it); // 从list容器feature中删除该特征点it的信息
     }
 }
 
+/**
+ * @brief           初始化（还原）有效特征点的逆深度值     
+ * @Description     取有效特征点，也就是该特征点被至少两帧观测到了并且第一次观测到的帧索引不是在最后，还原有效特征点的逆深度值为-1
+ * @param[in]       x 所有特征点的深度值向量，这里所有元素都为-1
+ * @return          void
+*/
 void FeatureManager::clearDepth(const VectorXd &x)
 {
     int feature_index = -1;
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : feature) // 遍历所有特征点
     {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        it_per_id.used_num = it_per_id.feature_per_frame.size(); // 该特征点it_per_id被观测到的所有帧的数量
+
+        // 该特征点被至少两帧观测到了并且第一次观测到的帧索引start_frame不是在最后，也就是第一次观测到的帧在滑动窗口内
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
-        it_per_id.estimated_depth = 1.0 / x(++feature_index);
+
+        it_per_id.estimated_depth = 1.0 / x(++feature_index); // 通过传入的深度值向量对有效特征点的逆深度赋值
     }
 }
 
+/**
+ * @brief           获取所有有效特征点的深度值
+ * @Description     取有效特征点it_per_id，也就是该特征点被至少两帧观测到了并且第一次观测到的帧索引不是在最后，获取有效特征点的逆深度估计值，并转换为深度值对深度值向量dep_vec赋值
+ * @param[in]       void
+ * @return          dep_vec 深度值向量
+*/
 VectorXd FeatureManager::getDepthVector()
 {
-    VectorXd dep_vec(getFeatureCount());
+    VectorXd dep_vec(getFeatureCount()); // 定义深度向量，维度为滑动窗口中被跟踪特征点的总数，通过getFeatureCount()得到
     int feature_index = -1;
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : feature) // 遍历所有特征点
     {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        it_per_id.used_num = it_per_id.feature_per_frame.size(); // 该特征点it_per_id被观测到的所有帧的数量
+
+        // 该特征点被至少两帧观测到了并且第一次观测到的帧索引start_frame不是在最后，也就是第一次观测到的帧在滑动窗口内
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 #if 1
-        dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;
+        dep_vec(++feature_index) = 1. / it_per_id.estimated_depth; // 获取深度向量，1除以逆深度估计值
 #else
         dep_vec(++feature_index) = it_per_id->estimated_depth;
 #endif
@@ -356,6 +405,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
     }
 }
 
+#if 0
 void FeatureManager::removeOutlier()
 {
     ROS_BREAK();
@@ -371,6 +421,7 @@ void FeatureManager::removeOutlier()
         }
     }
 }
+#endif
 
 /**
  * @brief           对应论文VI-D，边缘化最老帧时处理深度值  
@@ -508,17 +559,15 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
     Vector3d p_i = frame_i.point; // 倒数第三帧i的3D路标点坐标
     Vector3d p_i_comp;
 
-    //int r_i = frame_count - 2;
-    //int r_j = frame_count - 1;
-    //p_i_comp = ric[camera_id_j].transpose() * Rs[r_j].transpose() * Rs[r_i] * ric[camera_id_i] * p_i;
-    // ？？？
     p_i_comp = p_i;
+
     // p_i(2)就是深度值，这里是归一化坐标所以z为1，也就是对倒数第三帧i的3D路标点去除深度，和j的操作不一样
     double dep_i = p_i(2);
     double u_i = p_i(0) / dep_i;
     double v_i = p_i(1) / dep_i;
     double du = u_i - u_j, dv = v_i - v_j;
 
+    // 和 p_i 一样的操作
     double dep_i_comp = p_i_comp(2);
     double u_i_comp = p_i_comp(0) / dep_i_comp;
     double v_i_comp = p_i_comp(1) / dep_i_comp;

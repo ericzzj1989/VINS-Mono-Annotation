@@ -109,7 +109,7 @@ class FeatureManager
     int getFeatureCount();
 
     bool addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td);
-    void debugShow();
+    // void debugShow(); 调试代码，没有用到
     vector<pair<Vector3d, Vector3d>> getCorresponding(int frame_count_l, int frame_count_r);
 
     //void updateDepth(const VectorXd &x);
@@ -121,7 +121,7 @@ class FeatureManager
     void removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3d marg_P, Eigen::Matrix3d new_R, Eigen::Vector3d new_P);
     void removeBack();
     void removeFront(int frame_count);
-    void removeOutlier();
+    // void removeOutlier(); 没有用到
     list<FeaturePerId> feature; // 特征管理器类主要指的是这个list容器，非常重要，通过FeatureManager中的这个list容器可以得到滑动窗口内所有的角点信息
     int last_track_num;
 
